@@ -1028,12 +1028,15 @@ void US_ReporterGMP::check_for_missing_models ( void )
 QString US_ReporterGMP::missing_models_msg( void )
 {
   QString models_str;
+  int num_dropped_triples = 0;
+  int num_total_missed_triples = 0;
 
   QMap < QString, QStringList >::iterator mmm;
   for ( mmm = Triple_to_ModelsMissing.begin(); mmm != Triple_to_ModelsMissing.end(); ++mmm )
     {
       if ( !mmm.value().isEmpty() )
 	{
+	  ++num_total_missed_triples;
 	  //check if missing models because of triple dropped
 	  bool isDropped = false;
 	  QString c_triple = mmm.key();
@@ -1044,12 +1047,13 @@ QString US_ReporterGMP::missing_models_msg( void )
 	      d_triple.replace(".","");
 	      if ( c_triple == d_triple )
 		{
+		  ++num_dropped_triples;
 		  isDropped = true;
 		  break;
 		}
 	    }
 	  
-	  //compose
+	  //compose : Do we want to report on dropped triples at all ?
 	  models_str += mmm.key() + ", missing models: " + mmm.value().join(", ");
 	  if( isDropped )
 	    models_str += "<font color='red'> [triple dropped]</font>";
@@ -1057,8 +1061,13 @@ QString US_ReporterGMP::missing_models_msg( void )
 	  models_str += "<br>";
 	}
     }
-  
-  if ( !models_str.isEmpty() )
+
+  qDebug() << "Number of total missing triples; Number of dropped triples -- "
+	   << num_total_missed_triples << "; " << num_dropped_triples;
+
+  // Do we want to report on dropped triples at all ?
+  // Do ONLY dropped triples trigger report to be non-GMP ?
+  if ( !models_str.isEmpty() & num_total_missed_triples != num_dropped_triples ) 
     GMP_report = false;
   
   return models_str;
@@ -1133,6 +1142,13 @@ void US_ReporterGMP::check_models ( int autoflowID )
     {
       QString channel_desc_alt = chndescs_alt[ i ];
       QString channel_desc     = chndescs[ i ];
+
+      //check if channel meant to be analyzed/reported
+      int analysis_to_be_run = analysis_runs[ i ];
+      int report_to_be_run   = report_runs[ i ];
+
+      if ( analysis_to_be_run == 0 || report_to_be_run == 0 )
+	continue;
 
       QList < double > chann_wvls    = ch_wvls[ channel_desc_alt ];
       int chann_wvl_number           = chann_wvls.size();
@@ -1382,8 +1398,8 @@ void US_ReporterGMP::load_gmp_report_db ( void )
   //read 'data' .tar.gz for autoflowGMPReport record:
   if ( gmpReport_runname_selected_c.  contains("combined") )
     {
-      gmpReport_runname_selected = gmpReport_runname_selected_c.split("(")[0];
-      gmpReport_runname_selected. simplified();
+      gmpReport_runname_selected = gmpReport_runname_selected_c.split("(")[0]. simplified();
+      //gmpReport_runname_selected. simplified();
     }
   else
     gmpReport_runname_selected = gmpReport_runname_selected_c;
@@ -1978,6 +1994,9 @@ void US_ReporterGMP::read_protocol_and_reportMasks( void )
   chndescs               = currAProf.chndescs;
   //Channel alt_descriptions
   chndescs_alt           = currAProf.chndescs_alt;
+  //Channel run/analysis_run
+  analysis_runs          = currAProf.analysis_run;
+  report_runs            = currAProf.report_run;
   //Channel reports
   ch_reports             = currAProf.ch_reports;
   //Channel wavelengths
@@ -5337,6 +5356,11 @@ bool US_ReporterGMP::modelGuidExistsForStage_ind( QString triple_n, QString mode
       QString c_triple_n =  Array_of_tripleNames[ i ];
       c_triple_n. replace(".","");
 
+      qDebug() << "IN modelGuidExistsForStage_ind(): triple_n, c_triple_n, model  -- "
+	       << triple_n << c_triple_n << model;
+      qDebug() << "IN modelGuidExistsForStage_ind(): mguid, Triple_to_ModelsDescGuid[ Array_of_tripleNames[ i ] ][ model ] -- "
+	       << mguid << Triple_to_ModelsDescGuid[ Array_of_tripleNames[ i ] ][ model ];
+      
       if ( c_triple_n == triple_n )
 	{
 	  QMap< QString, QString > tmapguid =  Triple_to_ModelsDescGuid[ Array_of_tripleNames[ i ] ];
@@ -5359,9 +5383,10 @@ bool US_ReporterGMP::modelGuidExistsForStage_ind( QString triple_n, QString mode
 //Individual Combined Plots
 void US_ReporterGMP::process_combined_plots_individual ( QString triplesname_p, QString stage_model )
 {
+  QString triplesname_passed = triplesname_p;
   QString filename_passed = get_filename( triplesname_p );
   QString triplesname = triplesname_p.replace(".","");
-  
+
   sdiag_combplot = new US_DDistr_Combine( "REPORT" );
   QStringList runIDs_single;
     
@@ -5396,15 +5421,29 @@ void US_ReporterGMP::process_combined_plots_individual ( QString triplesname_p, 
   
   for ( int ii = 0; ii < modelDescModified.size(); ii++ )  
     {
+      QString triplesname_mod  = triplesname;
+      QString triplesname_chann;                   //Should be "1A:UV/vis." OR "1A:Interf."
 
+      if ( triplesname.contains("Interference") )
+	{
+	  triplesname_mod   = triplesname_mod.replace( "Interference" , "660");
+	  triplesname_chann = triplesname_passed.split(".")[0] + triplesname_passed.split(".")[1] + ":Interf.";
+	}
+      else
+	triplesname_chann = triplesname_passed.split(".")[0] + triplesname_passed.split(".")[1] + ":UV/vis.";
+      
       qDebug() << "INDCOMBO_1: " << modelDescModified[ ii ];
-      qDebug() << "INDCOMBO_2: " << triplesname << stage_model;
+      qDebug() << "INDCOMBO_2: " << triplesname << stage_model << triplesname_chann;
+          
       //fiter by type|model
-      if ( modelDescModified[ ii ].contains( triplesname ) &&
+      if ( modelDescModified[ ii ].contains( triplesname_mod ) &&
 	   modelDescModified[ ii ].contains( stage_model ) &&
 	   modelGuidExistsForStage_ind( triplesname, stage_model, modelDescModifiedGuid[ ii ] ) )
 	{
 	  qDebug()  << "INDCOMBO_3: YES ";
+
+	  //compose map of [{"s_ranges","k_ranges"}, etc] from cAP2 & cAPp (for given channel & model!!!)
+	  QMap< QString, QStringList > sim_ranges = find_sim_ranges( triplesname_chann, stage_model );  
 
 	  QString t_m = "s," + stage_model;
 	  QMap < QString, QString > c_params = comboPlotsMap[ t_m ];
@@ -5456,12 +5495,19 @@ void US_ReporterGMP::process_combined_plots_individual ( QString triplesname_p, 
 		  c_parms = comboPlotsMap[ t_m ];
 		  //put ranges into c_parms:
 		  c_parms[ "Ranges" ] = ranges.join(",");
+
+		  qDebug() << "s-type: sim_ranges.keys(), sim_ranges[\"s_ranges\"] -- "
+			   << sim_ranges.keys()
+			   << sim_ranges["s_ranges"];
+		  if ( sim_ranges. contains("s_ranges") )
+		    c_parms[ "s_ranges" ] = sim_ranges["s_ranges"].join(",");
+		  	    
 		  
 		  //qDebug() << "over models: c_params -- " << c_params;
 		  
 		  //ALEXEY: here it plots s20 combPlot (xtype == 0)	  
 		  plotted_ids_colors_map_s_type = sdiag_combplot-> changedPlotX_auto( 0, c_parms );
-		  
+		 		  
 		  write_plot( imgComb02File, sdiag_combplot->rp_data_plot1() );                //<-- rp_data_plot1() gives combined plot
 		  imgComb02File.replace( svgext, pngext ); 
 		  CombPlotsFileNames << imgComb02File;
@@ -5516,6 +5562,9 @@ void US_ReporterGMP::process_combined_plots_individual ( QString triplesname_p, 
 		  c_parms = comboPlotsMap[ t_m ];
 		  //put ranges into c_parms:
 		  c_parms[ "Ranges" ] = ranges.join(",");
+
+		  if ( sim_ranges. contains("k_ranges") )
+		    c_parms[ "k_ranges" ] = sim_ranges["k_ranges"].join(",");
 		  
 		  plotted_ids_colors_map_s_type = sdiag_combplot-> changedPlotX_auto( 3, c_parms );
 		  
@@ -5538,6 +5587,50 @@ void US_ReporterGMP::process_combined_plots_individual ( QString triplesname_p, 
   qApp->processEvents();
 }
 
+//pull s_ranges, k_ranges from AProfile
+QMap< QString, QStringList > US_ReporterGMP::find_sim_ranges( QString chann_desc, QString model )
+{
+  QMap < QString, QStringList > sim_ranges;
+
+  qDebug() << "[in find_sim_ranges()1] -- " << chann_desc << model;
+  
+  if ( model. contains("2DSA") )
+    {
+      //2DSA
+      for (int i=0; i<cAP2.parms.size(); ++i )
+	{
+	  QString channame = cAP2.parms[i].channel;
+	  qDebug() << "channame -- " << channame;
+	  
+	  if ( channame. contains( chann_desc ) )
+	    {
+	      sim_ranges[ "s_ranges" ] << QString::number( cAP2.parms[i].s_min )
+				       << QString::number( cAP2.parms[i].s_max );
+	      sim_ranges[ "k_ranges" ] << QString::number( cAP2.parms[i].k_min )
+				       << QString::number( cAP2.parms[i].k_max );
+	      break;
+	    }
+	}
+    }
+  else if ( model. contains("PCSA") )
+    {
+      //PCSA
+      for (int i=0; i<cAPp.parms.size(); ++i )
+	{
+	  QString channame = cAPp.parms[i].channel;
+	  if ( channame == chann_desc )
+	    {
+	      sim_ranges[ "s_ranges" ] << QString::number( cAPp.parms[i].x_min )
+				       << QString::number( cAPp.parms[i].x_max );
+	      sim_ranges[ "y_ranges" ] << QString::number( cAPp.parms[i].y_min )
+				       << QString::number( cAPp.parms[i].y_max );
+	      break;
+	    }
+	}
+    }
+
+  return sim_ranges;
+}
 
 //Combined Plots
 void US_ReporterGMP::process_combined_plots ( QString filename_passed )
@@ -6297,7 +6390,7 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
 			   
 			   "<table style=\"margin-left:25px\">"
 			   "<tr>"
-			   "<td> Initiated at:     %1 </td>"
+			   "<td> Initiated at:     %1 (UTC) </td>"
 			   "</tr>"
 			   "</table>"
 			   )
@@ -6388,7 +6481,7 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
 			   "<table style=\"margin-left:25px\">"
 			   "<tr>"
 			   "<td> Type:             %1 </td> "
-			   "<td> Performed at:     %2 </td>"
+			   "<td> Performed at:     %2 (UTC) </td>"
 			   "</tr>"
 			   "</table>"
 			   )
@@ -6494,7 +6587,7 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
 			   "<table style=\"margin-left:25px\">"
 			   "<tr>"
 			   "<td> Ref. Scan Method:  %1 </td> "
-			   "<td> Data Saved at:     %2 </td>"
+			   "<td> Data Saved at:     %2 (UTC)</td>"
 			   "</tr>"
 			   "</table>"
 			   )
@@ -6663,11 +6756,11 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
       //Edit Profiles Saved:
       html_assembled += tr(
 			   "<table style=\"margin-left:10px\">"
-			   "<caption align=left> <b><i>Edit Profiles Saved at: </i></b> </caption>"
+			   "<caption align=left> <b><i>Edit Profiles Saved on: </i></b> </caption>"
 			   "</table>"
 			   
 			   "<table style=\"margin-left:25px\">"
-			   "<tr><td> %1 </td>"
+			   "<tr><td> %1 (UTC)</td>"
 			   "</table>"
 			   )
 	.arg( data_types_edit_ts[ im.key() ] )           //1
@@ -6734,7 +6827,7 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
 			       "<td> Channel:  %1, </td>"
 			       "<td>           %2, </td>"
 			       "<td> by:       %3, </td>"
-			       "<td> at:       %4  </td>"
+			       "<td> at:       %4  (UTC)</td>"
 			       "</tr>"
 						       )
 	    .arg( mfa.key()   )     //1
@@ -6797,7 +6890,7 @@ void US_ReporterGMP::assemble_user_inputs_html( void )
 			       "<td> Reason:             %3, </td>"
 			       "</tr>"
 			       "<tr>"
-			       "<td> When:               %4  </td>"
+			       "<td> When:               %4 (UTC) </td>"
 			       "</tr>"
 						       )
 	    .arg( cj.key()   )      //1
@@ -7493,6 +7586,7 @@ QString US_ReporterGMP::calc_replicates_averages( void )
     {
       QString ch_alt_desc  = chw.key();
       QStringList all_wvls = chw.value();
+      QString o_type       = ch_alt_desc.split(":")[1];
 
       QStringList unique_wvls;
       QStringList unique_channels;
@@ -7501,12 +7595,15 @@ QString US_ReporterGMP::calc_replicates_averages( void )
       for( int i=0; i<all_wvls.size(); ++i )
 	{
 	  QString curr_triple = all_wvls[ i ];
-	  QString curr_chann  = all_wvls[ i ].split(".")[0];
+	  QString curr_chann  = all_wvls[ i ].split(".")[0];  
 	  QString curr_wvl    = all_wvls[ i ].split(".")[1];
 
 	  unique_wvls               << curr_wvl;
 	  unique_channels           << curr_chann;
-	  same_wvls_chann_map[ curr_wvl ] << curr_chann;
+
+	  //here, add to list FULL channel desc, e.g. "1A:Iterf.", or "1A:UV/vis."
+	  //same_wvls_chann_map[ curr_wvl ] << curr_chann; //BEFORE
+	  same_wvls_chann_map[ curr_wvl ] << curr_chann + ":" + o_type; //Will this work?
 	}
       
       unique_wvls.     removeDuplicates();
@@ -7514,9 +7611,10 @@ QString US_ReporterGMP::calc_replicates_averages( void )
 
       QString replicate_group_number = get_replicate_group_number( ch_alt_desc );
       
-      html_str_replicate_av += "\n" + indent( 2 ) + tr( "<h3>Replicate Group #%1: [Channels: %2] </h3>\n" )
+      html_str_replicate_av += "\n" + indent( 2 ) + tr( "<h3>Replicate Group #%1: [Channels: %2 (%3)] </h3>\n" )
 	.arg( replicate_group_number )
-	.arg( unique_channels.join(",") );
+	.arg( unique_channels.join(",") )
+	.arg( o_type );
       
       
       //iterate over unique wvls
@@ -7526,7 +7624,7 @@ QString US_ReporterGMP::calc_replicates_averages( void )
 
 	  QString replicate_subgroup_triples;
 	  for ( int jj=0; jj < same_wvls_chann_map[ u_wvl ].size(); ++jj )
-	    replicate_subgroup_triples += same_wvls_chann_map[ u_wvl ][ jj ] + "." + u_wvl + ",";
+	    replicate_subgroup_triples += same_wvls_chann_map[ u_wvl ][ jj ].split(":")[0] + "." + u_wvl + ",";
 
 	  replicate_subgroup_triples.chop(1);
 	  
@@ -7644,13 +7742,17 @@ QMap<QString, double> US_ReporterGMP::get_replicate_group_results( US_ReportGMP:
 	{
 	  QString channel_desc_alt = chndescs_alt[ j ];
 
-	  //For now, do not consider IP type!!!
-	  if ( channel_desc_alt.contains("Interf") ) 
-	    continue;
+	  // //For now, do not consider IP type!!!
+	  // if ( channel_desc_alt.contains("Interf") ) 
+	  //   continue;
 	  
-	  if ( channel_desc_alt.split(":")[0].contains( channs_for_wvl[ i ] ) )  
+	  //if ( channel_desc_alt.split(":")[0].contains( channs_for_wvl[ i ] ) )  
+	  if ( channel_desc_alt .contains( channs_for_wvl[ i ] ) )  
 	    {
-	      qDebug() << "In get_replicate_group_results(): channel_desc_alt, wvl -- " << channel_desc_alt << u_wvl;
+	      qDebug() << "In get_replicate_group_results(): channel_desc_alt, channs_for_wvl[ i ], wvl -- "
+		       << channel_desc_alt
+		       << channs_for_wvl[ i ]
+		       << u_wvl;
 
 	      //Select US_ReportGMP for channel in a Replicate group && representative wvl!
 	      reportGMP = ch_reports[ channel_desc_alt ][ u_wvl ];
@@ -7658,6 +7760,7 @@ QMap<QString, double> US_ReporterGMP::get_replicate_group_results( US_ReportGMP:
 	      break;
 	    }
 	}
+            
       //then pick report's ReportItem corresponding to the passed ref_report_item:
       int report_items_number = reportGMP. reportItems.size();
       for ( int kk = 0; kk < report_items_number; ++kk )
@@ -11673,8 +11776,8 @@ void US_ReporterGMP::get_current_date()
   
   // current_date = dNow.toString( fmt );
   
-  QDateTime date = QDateTime::currentDateTime();
-  current_date = date.toString("MM/dd/yyyy hh:mm:ss");
+  QDateTime date = QDateTime::currentDateTimeUtc();
+  current_date = date.toString("MM/dd/yyyy hh:mm:ss") + " (UTC)";
 
   qDebug() << "Current date -- " << current_date;
 }
