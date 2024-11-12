@@ -11,6 +11,8 @@ US_EquilApproach::US_EquilApproach(QWidget *parent)
     setWindowTitle("Equilibrium Approach");
     pb_load = us_pushbutton("load");
     pb_reset = us_pushbutton("Reset");
+    pb_save = us_pushbutton("Save");
+
 
 
     QVBoxLayout* leftlayout = new QVBoxLayout();
@@ -29,7 +31,7 @@ US_EquilApproach::US_EquilApproach(QWidget *parent)
     QHBoxLayout* loadlayout = new QHBoxLayout();
     loadlayout->addWidget(pb_load);
     loadlayout->addWidget(pb_reset);
-
+    loadlayout->addWidget(pb_save);
     leftlayout->addLayout(loadlayout);
 
 
@@ -78,9 +80,14 @@ US_EquilApproach::US_EquilApproach(QWidget *parent)
     }
 
 
-    pb_startpick = us_pushbutton("Beginging Radial Region");
-    pb_endpick = us_pushbutton("End Radial Region");
+    pb_startpick = us_pushbutton("Define Radial Region(s)");
+    pb_endpick = us_pushbutton("Accept");
     pb_endpick->setDisabled(true);
+
+
+
+
+
 
 
     QHBoxLayout* picker_layout = new QHBoxLayout;
@@ -90,13 +97,37 @@ US_EquilApproach::US_EquilApproach(QWidget *parent)
 
     leftlayout->addLayout(picker_layout);
 
+    QLabel* lb_nnls = us_banner("Grid Control");
+    QLabel* lb_ngrids = us_label("Number of Grids");
+    QLabel* lb_nrange = us_label("Span Setter");
+    pb_fit = us_pushbutton("Start Fit");
+
+    le_ngrids = us_lineedit("100");
+    le_nrange = us_lineedit("10");
+    le_ngrids->setInputMask("999");
+    le_nrange->setInputMask("99");
+
+
+
+    leftlayout->addWidget(lb_nnls);
+
+
+    QGridLayout* lyt_nnls = new QGridLayout();
+    lyt_nnls->addWidget(lb_ngrids,    0, 0, 1, 1);
+    lyt_nnls->addWidget(le_ngrids,    0, 1, 1, 1);
+    lyt_nnls->addWidget(lb_nrange,    1, 0, 1, 1);
+    lyt_nnls->addWidget(le_nrange,    1, 1, 1, 1);
+
+    leftlayout->addLayout(lyt_nnls);
+
+    leftlayout->addWidget(pb_fit);
 
 
     // ploting
 
     //plot_up = new QwtPlot();
     usplot_up = new US_Plot(plot_up, "", "Radius (in cm)", "Intensity");
-    usplot_down = new US_Plot(plot_down, "", "Radius (in cm)", "Intensity");
+    usplot_down = new US_Plot(plot_down, "", "Time (seconds)", "Radius (in cm)");
 
     picker = new US_PlotPicker( plot_up);
 
@@ -110,6 +141,8 @@ US_EquilApproach::US_EquilApproach(QWidget *parent)
     connect(pb_load, &QPushButton::clicked, this, &US_EquilApproach::load_data);
     connect(pb_startpick, &QPushButton::clicked, this, &US_EquilApproach::str_pick);
     connect(pb_endpick,&QPushButton::clicked, this, &US_EquilApproach::end_pick);
+    connect(pb_save, &QPushButton::clicked, this, &US_EquilApproach::save_mplot);
+    connect(pb_fit, &QPushButton::clicked, this, &US_EquilApproach::strt_fit);
 
 
 
@@ -137,10 +170,11 @@ void US_EquilApproach::end_pick(){
     }
 
     proccess_data();
-
-
-
-
+    int lambda_idx = cb_lambda->currentIndex();
+    int rawdata_idx = current_idx.at(lambda_idx);
+    current_mdata.clear();
+    current_mdata = rawdata_model.at(rawdata_idx);
+    plot_mdata();
 
 
 
@@ -159,8 +193,12 @@ void US_EquilApproach::mouse_clk(const QwtDoublePoint& point){
 void US_EquilApproach::str_pick(){
     picker->disconnect();
     connect(picker, &US_PlotPicker::cMouseUp, this, &US_EquilApproach::mouse_clk);
+
     pb_startpick->setDisabled(true);
     pb_endpick->setEnabled(true);
+    picker->setRubberBand  ( QwtPicker::VLineRubberBand );
+    picker->setMousePattern( QwtEventPattern::MouseSelect1,
+                          Qt::LeftButton, Qt::ControlModifier );
 
     picked_points.clear();
 
@@ -193,7 +231,12 @@ void US_EquilApproach::load_data() {
         US_DataIO::RawData rdata;
         int state = US_DataIO::readRawData(fpath, rdata);
         if (state == US_DataIO::OK){
-
+            if (rdata.type[0] != 'R'){
+                continue;
+            }
+            if (!(rdata.type[1] == 'A' || rdata.type[1] == 'I')){
+                continue;
+            }
             if ( runID.isEmpty()){
                 runID = fname.section('.', 0, 1);
                 rawdata << rdata;
@@ -269,6 +312,7 @@ void US_EquilApproach::ls_triple(){
 }
 
 void US_EquilApproach::cc_changed(int row){
+
     current_idx.clear();
     current_lmbd.clear();
     QString key = lw_triple->item(row)->text();
@@ -302,6 +346,9 @@ void US_EquilApproach::lmbd_changed(){
     int lambda_idx = cb_lambda->currentIndex();
     int rawdata_idx = current_idx.at(lambda_idx);
     current_rdata = rawdata.at(rawdata_idx);
+    current_mdata.clear();
+    current_mdata = rawdata_model.at(rawdata_idx);
+    plot_mdata();
     plot_rdata();
 
 
@@ -311,6 +358,7 @@ void US_EquilApproach::lmbd_changed(){
 
 void US_EquilApproach::plot_rdata(){
     plot_up->detachItems(QwtPlotItem::Rtti_PlotItem, false);
+    plot_up->replot();
     int n_scan = current_rdata.scanCount();
     int n_points = current_rdata.pointCount();
     const double* xp = current_rdata.xvalues.data();
@@ -323,19 +371,168 @@ void US_EquilApproach::plot_rdata(){
         curve->setPen(pen);
         yp = current_rdata.scanData.at(i).rvalues.data();
         curve->setSamples(xp, yp, n_points);
+// trying to show gridlines
+        grid = new QwtPlotGrid;
+        grid->enableX(true);
+        grid->enableY(true);
+
+        grid->majorPen();
+        //grid.d
+
+
+    }
+
+    // grid->enableX(true);
+    // grid->enableY(true);
+    plot_up->replot();
+
+}
+
+
+void US_EquilApproach::proccess_data(){
+    QVector<double> minreg;
+    QVector<double> maxreg;
+    int num_reg = picked_points.size()/2;
+    for (int i = 0; i < num_reg; i++){
+        double min = picked_points.at(2*i);
+        double max = picked_points.at(2*i + 1);
+        minreg << min;
+        maxreg << max;
+    }
+
+
+    for ( int i = 0; i < current_idx.size(); i++){
+        int idx = current_idx.at(i);
+        rawdata_model[idx].clear();
+        rawdata_model[idx].minreg << minreg;
+        rawdata_model[idx].maxreg << maxreg;
+
+
+        US_DataIO::RawData rdata = rawdata.at(idx);
+        int numberscan = rdata.scanCount();
+        int numberpoints = rdata.pointCount();
+        QVector<double> time;
+        for (int ss = 0; ss < numberscan; ss++){
+            time << rdata.scanData.at(ss).seconds;
+        }
+        rawdata_model[idx].time << time;
+
+        QVector<QVector<double>> yval;
+        for( int rr = 0; rr < num_reg; rr++){
+            QVector<double> yval_cur_reg;
+
+            double min = minreg.at(rr);
+            double max = maxreg.at(rr);
+            for( int ss = 0; ss < numberscan; ss++){
+                double tgt_yval;
+                double tgt_xval;
+                bool flag = true;
+
+                for (int pp = 0; pp < numberpoints; pp++){
+                    double rvalue = rdata.scanData.at(ss).rvalues.at(pp);
+                    double xvalue = rdata.xvalues.at(pp);
+                    if (xvalue < min){
+                        continue;
+                    }
+                    if (xvalue > max){
+                        break;
+                    }
+                    if (flag) {
+                        tgt_yval = rvalue;
+                        tgt_xval = xvalue;
+                        flag = false;
+                        continue;
+                    }
+
+                    if ( rdata.type[1] == 'A' && rvalue > tgt_yval){
+                        tgt_yval = rvalue;
+                        tgt_xval = xvalue;
+                    } else if (rdata.type[1] == 'I' && rvalue < tgt_yval){
+                        tgt_yval = rvalue;
+                        tgt_xval = xvalue;
+                    }
+                }
+
+                yval_cur_reg << tgt_xval;
+            }
+            yval << yval_cur_reg;
+        }
+        rawdata_model[idx].yval << yval;
+
+    }
+}
+
+void US_EquilApproach::plot_mdata(){
+    plot_down->detachItems(QwtPlotItem::Rtti_PlotItem, false);
+    plot_down->replot();
+    if (current_mdata.time.isEmpty()){
+        return;
+    }
+    QVector<double> time = current_mdata.time;
+    QVector<QVector<double>> yval = current_mdata.yval;
+
+
+    const double* xp = time.data();
+    const double* yp;
+
+    for (int i = 0; i < yval.size(); i++){
+        QString label = tr("Species %1").arg(i+1);
+        QwtPlotCurve* curve = us_curve( plot_down, label );
+        //QPen pen(Qt::red);
+        //curve->setPen(pen);
+        // change the plot style to dots
+        curve->setStyle(QwtPlotCurve::Dots);
+
+
+        // create a symbol to change the shape and size then replot
+        QwtSymbol* dots = new QwtSymbol(QwtSymbol::Ellipse);
+        dots->setBrush(Qt::red);
+        dots->setSize(10);
+
+        //attach the symbol to the curve
+        curve->setSymbol(dots);
+
+        yp = yval.at(i).data();
+        curve->setSamples(xp, yp, time.size());
+
+
+
+    }
+
+    // grid->enableX(true);
+    // grid->enableY(true);
+    plot_down->replot();
+
+}
+
+void US_EquilApproach::save_mplot(){
+
+    if(current_mdata.time.isEmpty()){
 
 
     }
 
 
-    plot_up->replot();
+}
 
+void US_EquilApproach::strt_fit(){
+    if (current_mdata.time.isEmpty()){
+        return;
+    }
 
 
 
 }
 
-void US_EquilApproach::proccess_data(){
+void US_EquilApproach::proccess_fit(EQ_Model& eq_model){
+    int nregion = eq_model.yval.size();
+    // using sigmoid function
+    // y = A/(1+e^-BX)
+    for (int ii = 0; ii < nregion; ++ii) {
+        double A_init, B_init;
+        QVector<double> time = eq_model.time;
+        QVector<double> yval = eq_model.yval.at(ii);
 
+    }
 }
 

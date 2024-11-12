@@ -5,7 +5,7 @@
 #include "us_widgets.h"
 #include "us_dataIO.h"
 #include <QMouseEvent>
-#include<QRubberBand>
+
 
 
 class US_EquilApproach : public US_Widgets
@@ -21,9 +21,15 @@ private:
     class EQ_Model {
     public:
         QVector<double> time;
-        QVector<QVector<double>> yval;
+        QVector<QVector<double>> yval; // multiple regions, hence vector of a vector
         QVector<double> minreg;
         QVector<double> maxreg;
+        // Qvector for nnls fitting holds the parameters of C, A, B for every species
+        //  Y = Sigma(C* (A/(1+e^Bx))), sum over all sigmoids
+        QVector<QVector<double>> model;
+
+
+
 
         void clear(){
             time.clear();
@@ -40,15 +46,21 @@ private:
 
     QPushButton* pb_load;
     QPushButton* pb_reset;
-    QLineEdit* le_runID;
-    QLineEdit* le_omega;
     QPushButton* pb_next;
     QPushButton* pb_prev;
     QPushButton* pb_startpick;
     QPushButton* pb_endpick;
-    QComboBox* cb_lambda;
+    QPushButton* pb_save;
+    QPushButton* pb_fit;
+
+    QLineEdit* le_runID;
+    QLineEdit* le_omega;
     QLineEdit* le_start;
     QLineEdit* le_end;
+    QLineEdit* le_ngrids;
+    QLineEdit* le_nrange;
+
+    QComboBox* cb_lambda;
 
 
 
@@ -60,14 +72,16 @@ private:
     QwtPlot* plot_down;
     QwtPlotGrid* grid;
 
+
     US_PlotPicker *picker;
 
 
     QVector<US_DataIO::RawData> rawdata;
 
-    QVector<EQ_Model> rawdata_model;
+    QList<EQ_Model> rawdata_model;
 
     US_DataIO::RawData current_rdata;
+    EQ_Model current_mdata;
 
     QHash<QString, QHash<QString, QVector<int>>> cc_organizer;
 
@@ -82,8 +96,9 @@ private:
 
     void ls_triple();
     void plot_rdata();
-
+    void plot_mdata();
     void proccess_data();
+    void proccess_fit(EQ_Model&);
 
 
 
@@ -97,6 +112,10 @@ private slots:
     void end_pick();
     void mouse_clk(const QwtDoublePoint&);
 
+    // save the model plot for nnls
+    void save_mplot();
+
+    void strt_fit();
 
 
 };
